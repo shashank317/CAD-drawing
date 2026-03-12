@@ -32,7 +32,7 @@ class CADParams(BaseModel):
 
 
 # --------------- Constants ---------------
-FREECAD_SCRIPT = r"C:\Users\sumit\FreeCAd scripting\FreeCad\custom_inputs.py"
+FREECAD_SCRIPT = str(Path(__file__).resolve().parent / "custom_inputs.py")
 DRAWING_SCRIPT = str(Path(__file__).resolve().parent / "also drawing.py")
 PYTHON_EXE = sys.executable
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
@@ -147,12 +147,6 @@ async def generate_drawing(params: CADParams):
     print(output)
     print(f"=== return code: {returncode} ===")
 
-    if returncode != 0:
-        raise HTTPException(
-            status_code=500,
-            detail=f"FreeCAD exited with code {returncode}.\n{output}",
-        )
-
     # Drawing script outputs:  <stem>_drawing.pdf  and  <stem>_drawing.svg
     base_stem = str(output_path).replace(".glb", "").replace(".gltf", "")
     pdf_path = Path(base_stem + "_drawing.pdf")
@@ -162,6 +156,18 @@ async def generate_drawing(params: CADParams):
     glb_path  = output_path
     gltf_path = output_path.with_suffix(".gltf")
     stl_path  = output_path.with_suffix(".stl")
+
+    # FreeCAD 1.0 has a known bug where it throws an "Access violation" on shutdown
+    # returning exit code 1 even though the script completed successfully.
+    # Therefore, we only raise an error if the files failed to generate.
+    generated_any_model = glb_path.exists() or gltf_path.exists() or stl_path.exists()
+    generated_any_drawing = pdf_path.exists() or svg_path.exists()
+
+    if returncode != 0 and not (generated_any_model and generated_any_drawing):
+        raise HTTPException(
+            status_code=500,
+            detail=f"FreeCAD exited with code {returncode} and failed to produce outputs.\n{output}",
+        )
 
     if not glb_path.exists() and stl_path.exists():
         try:
