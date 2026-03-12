@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FreeCAD Model Generator</title>
+
+  <!-- Three.js via ES Module importmap -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <style>
+    *,*::before,*::after { margin:0; padding:0; box-sizing:border-box; }
+
+    :root {
+      --sidebar-w: 340px;
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.35);
+      --text: #e4e4ec;
+      --text-muted: #8b8da3;
+      --border: #2a2d3a;
+      --transition: 0.25s ease;
+    }
+
+    html, body { height:100%; font-family:"Segoe UI",Inter,system-ui,sans-serif; background:var(--bg); color:var(--text); }
+
+    .app { display:flex; height:100vh; }
+
+    /* Sidebar */
+    .sidebar {
+      width:var(--sidebar-w); min-width:var(--sidebar-w);
+      background:var(--surface); border-right:1px solid var(--border);
+      display:flex; flex-direction:column; padding:28px 24px 24px; gap:10px; overflow-y:auto;
+    }
+    .sidebar .logo { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+    .logo-icon {
+      width:36px; height:36px; border-radius:10px;
+      background:linear-gradient(135deg,var(--accent),#a78bfa);
+      display:grid; place-items:center; font-size:18px; color:#fff; flex-shrink:0;
+    }
+    .logo h1 { font-size:1.05rem; font-weight:700; letter-spacing:-0.02em; }
+    .logo span { display:block; font-size:0.7rem; color:var(--text-muted); font-weight:400; letter-spacing:0.04em; text-transform:uppercase; }
+    .divider { height:1px; background:var(--border); margin:6px 0 10px; }
+    .section-label { font-size:0.65rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-muted); margin-bottom:2px; }
+
+    /* Inputs */
+    .field { display:flex; flex-direction:column; gap:5px; }
+    .field label { font-size:0.78rem; color:var(--text-muted); font-weight:500; }
+    .field input {
+      width:100%; padding:10px 14px; border-radius:8px; border:1px solid var(--border);
+      background:var(--bg); color:var(--text); font-size:0.9rem; outline:none;
+      transition: border var(--transition), box-shadow var(--transition);
+    }
+    .field input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
+    .field input.invalid { border-color:#e74c5e; box-shadow:0 0 0 3px rgba(231,76,94,0.25); }
+    .field .field-error { font-size:0.7rem; color:#e74c5e; min-height:1em; line-height:1.3; }
+
+    /* Validation summary */
+    .validation-errors { background:rgba(231,76,94,0.1); border:1px solid rgba(231,76,94,0.3); border-radius:8px; padding:10px 14px; margin-bottom:4px; display:none; }
+    .validation-errors.visible { display:block; }
+    .validation-errors p { font-size:0.72rem; color:#e74c5e; margin:3px 0; }
+
+    /* Button */
+    .btn-apply {
+      margin-top:auto; width:100%; padding:14px; border:none; border-radius:10px;
+      background:linear-gradient(135deg,var(--accent),#a78bfa); color:#fff;
+      font-size:0.85rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase;
+      cursor:pointer; display:flex; align-items:center; justify-content:center; gap:10px;
+      transition: opacity var(--transition), transform var(--transition);
+    }
+    .btn-apply:hover:not(:disabled) { opacity:0.92; transform:translateY(-1px); }
+    .btn-apply:disabled { opacity:0.55; cursor:not-allowed; }
+
+    /* Spinner */
+    .spinner { display:none; width:18px; height:18px; border:2.5px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; }
+    .spinner.visible { display:inline-block; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* Viewer */
+    .viewer {
+      flex:1; position:relative; display:flex; align-items:center; justify-content:center;
+      background:radial-gradient(ellipse at center,#191c28 0%,var(--bg) 70%); overflow:hidden;
+    }
+    #viewer-canvas { width:100%; height:100%; display:none; }
+    .placeholder-msg { position:absolute; text-align:center; color:var(--text-muted); pointer-events:none; transition:opacity .4s ease; }
+    .placeholder-msg.hidden { opacity:0; pointer-events:none; }
+    .placeholder-msg svg { width:64px; height:64px; margin-bottom:16px; opacity:0.25; }
+    .placeholder-msg p { font-size:0.95rem; }
+
+    /* Toast */
+    .toast {
+      position:fixed; bottom:28px; right:28px; background:#e74c5e; color:#fff;
+      padding:14px 22px; border-radius:10px; font-size:0.82rem; font-weight:500;
+      box-shadow:0 8px 30px rgba(0,0,0,0.4); transform:translateY(120%); opacity:0;
+      transition:transform .35s ease, opacity .35s ease; max-width:420px; z-index:999;
+    }
+    .toast.show { transform:translateY(0); opacity:1; }
+
+    @media (max-width:720px) {
+      .app { flex-direction:column; }
+      .sidebar { width:100%; min-width:unset; max-height:50vh; border-right:none; border-bottom:1px solid var(--border); }
+    }
+
+    /* Drawing button */
+    .btn-drawing {
+      width:100%; padding:14px; border:none; border-radius:10px;
+      background:linear-gradient(135deg,#22c55e,#16a34a); color:#fff;
+      font-size:0.85rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase;
+      cursor:pointer; display:flex; align-items:center; justify-content:center; gap:10px;
+      transition: opacity var(--transition), transform var(--transition);
+    }
+    .btn-drawing:hover:not(:disabled) { opacity:0.92; transform:translateY(-1px); }
+    .btn-drawing:disabled { opacity:0.55; cursor:not-allowed; }
+
+    /* Drawing panel overlay */
+    .drawing-panel {
+      position:absolute; top:0; left:0; width:100%; height:100%;
+      background:var(--surface);
+      display:none; flex-direction:column; z-index:50;
+    }
+    .drawing-panel.visible { display:flex; }
+    .drawing-header {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px 20px; border-bottom:1px solid var(--border); flex-shrink:0;
+    }
+    .drawing-header h3 { font-size:0.95rem; font-weight:600; }
+    .drawing-actions { display:flex; align-items:center; gap:10px; }
+    .drawing-link {
+      font-size:0.75rem; color:var(--accent); text-decoration:none; font-weight:600;
+      padding:6px 12px; border:1px solid var(--accent); border-radius:6px;
+      transition:background var(--transition), color var(--transition);
+    }
+    .drawing-link:hover { background:var(--accent); color:#fff; }
+    .drawing-close {
+      background:none; border:none; color:var(--text-muted); font-size:1.4rem;
+      cursor:pointer; line-height:1; padding:4px 8px;
+    }
+    .drawing-close:hover { color:#e74c5e; }
+    .drawing-body { flex:1; position:relative; overflow:hidden; background:#e8e8e8; min-height:0; }
+    .drawing-iframe { width:100%; height:100%; border:none; background:#fff; display:none; position:absolute; top:0; left:0; right:0; bottom:0; }
+    .drawing-img { max-width:100%; max-height:100%; display:block; margin:auto; background:#fff; }
+    .drawing-empty { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:var(--text-muted); font-size:0.9rem; text-align:center; }
+
+    /* View toggle tabs */
+    .view-tabs {
+      position:absolute; top:14px; left:50%; transform:translateX(-50%);
+      display:flex; gap:0; z-index:40; border-radius:8px; overflow:hidden;
+      border:1px solid var(--border); background:var(--surface);
+    }
+    .view-tabs.hidden { display:none; }
+    .view-tab {
+      padding:8px 20px; font-size:0.78rem; font-weight:600; text-transform:uppercase;
+      letter-spacing:0.04em; border:none; cursor:pointer;
+      color:var(--text-muted); background:var(--surface);
+      transition:background var(--transition), color var(--transition);
+    }
+    .view-tab:not(:last-child) { border-right:1px solid var(--border); }
+    .view-tab.active { background:var(--accent); color:#fff; }
+    .view-tab:hover:not(.active) { background:var(--bg); color:var(--text); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="logo">
+        <div class="logo-icon">&#9881;</div>
+        <div><h1>CAD Generator</h1><span>Powered by FreeCAD</span></div>
+      </div>
+      <div class="divider"></div>
+      <p class="section-label">Bearing Parameters</p>
+
+      <div class="field">
+        <label for="roller_diameter">Roller Diameter (mm)</label>
+        <input id="roller_diameter" type="number" min="30" max="1000" step="0.1" value="160.5" />
+        <span class="field-error" id="err_roller_diameter"></span>
+      </div>
+      <div class="field">
+        <label for="bearing_width">Bearing Width (mm)</label>
+        <input id="bearing_width" type="number" min="5" max="200" step="0.1" value="20.0" />
+        <span class="field-error" id="err_bearing_width"></span>
+      </div>
+      <div class="field">
+        <label for="shaft_diameter">Shaft Diameter (mm)</label>
+        <input id="shaft_diameter" type="number" min="5" max="200" step="0.1" value="26.0" />
+        <span class="field-error" id="err_shaft_diameter"></span>
+      </div>
+      <div class="field">
+        <label for="overall_height">Overall Height (mm)</label>
+        <input id="overall_height" type="number" min="20" max="500" step="0.1" value="50.0" />
+        <span class="field-error" id="err_overall_height"></span>
+      </div>
+      <div class="field">
+        <label for="base_width">Base Width (mm)</label>
+        <input id="base_width" type="number" min="20" max="500" step="0.1" value="100.5" />
+        <span class="field-error" id="err_base_width"></span>
+      </div>
+
+      <div class="validation-errors" id="validationErrors"></div>
+
+      <button class="btn-apply" id="btnApply">
+        <span class="spinner" id="spinner"></span>
+        <span id="btnLabel">Apply Configuration</span>
+      </button>
+
+      <button class="btn-drawing" id="btnDrawing">
+        <span class="spinner" id="spinnerDrawing"></span>
+        <span id="btnDrawingLabel">Generate Drawing (PDF/SVG)</span>
+      </button>
+    </aside>
+
+    <main class="viewer">
+      <div class="placeholder-msg" id="placeholder">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
+        </svg>
+        <p>Configure parameters &amp; click <strong>Apply</strong> to generate a 3D model.</p>
+      </div>
+      <canvas id="viewer-canvas"></canvas>
+
+      <!-- Tab switcher (hidden until drawing exists) -->
+      <div class="view-tabs hidden" id="viewTabs">
+        <button class="view-tab active" id="tab3d">3D Model</button>
+        <button class="view-tab" id="tabDrawing">Drawing</button>
+      </div>
+
+      <!-- Drawing panel -->
+      <div class="drawing-panel" id="drawingPanel">
+        <div class="drawing-header">
+          <h3>Engineering Drawing</h3>
+          <div class="drawing-actions">
+            <a class="drawing-link" id="downloadPdf" href="#" style="display:none;">&#128196; PDF</a>
+            <a class="drawing-link" id="downloadSvg" href="#" style="display:none;">&#128196; SVG</a>
+            <button class="drawing-close" id="closeDrawing">&times;</button>
+          </div>
+        </div>
+        <div class="drawing-body" id="drawingBody">
+          <iframe id="drawingIframe" class="drawing-iframe"></iframe>
+          <img id="drawingImg" class="drawing-img" style="display:none;" alt="Engineering Drawing" />
+          <p class="drawing-empty" id="drawingEmpty">No drawing generated yet.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const $ = (sel) => document.querySelector(sel);
+    const btnApply      = $("#btnApply");
+    const btnLabel      = $("#btnLabel");
+    const spinner       = $("#spinner");
+    const btnDrawing    = $("#btnDrawing");
+    const btnDrawingLbl = $("#btnDrawingLabel");
+    const spinnerDraw   = $("#spinnerDrawing");
+    const canvas        = $("#viewer-canvas");
+    const placeholder   = $("#placeholder");
+    const toast         = $("#toast");
+    const validationBox = $("#validationErrors");
+    const drawingPanel  = $("#drawingPanel");
+    const drawingIframe = $("#drawingIframe");
+    const drawingImg    = $("#drawingImg");
+    const drawingEmpty  = $("#drawingEmpty");
+    const downloadPdf   = $("#downloadPdf");
+    const downloadSvg   = $("#downloadSvg");
+    const closeDrawing  = $("#closeDrawing");
+    const viewTabs      = $("#viewTabs");
+    const tab3d         = $("#tab3d");
+    const tabDrawing    = $("#tabDrawing");
+
+    const inputs = {
+      roller_diameter: $("#roller_diameter"),
+      bearing_width:   $("#bearing_width"),
+      shaft_diameter:  $("#shaft_diameter"),
+      overall_height:  $("#overall_height"),
+      base_width:      $("#base_width"),
+    };
+
+    /* ========== Three.js ========== */
+    let scene, camera, renderer, controls, currentMesh;
+    let viewerReady = false;
+
+    function initViewer() {
+      if (viewerReady) return;
+      viewerReady = true;
+
+      const container = canvas.parentElement;
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0f1117);
+
+      camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 10000);
+      camera.position.set(150, 150, 150);
+
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.shadowMap.enabled = true;
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.autoRotate = true;
+      controls.autoRotateSpeed = 1.5;
+
+      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+      const d1 = new THREE.DirectionalLight(0xffffff, 1.0);
+      d1.position.set(200, 300, 200); d1.castShadow = true; scene.add(d1);
+      const d2 = new THREE.DirectionalLight(0x8888ff, 0.4);
+      d2.position.set(-200, -100, -200); scene.add(d2);
+
+      scene.add(new THREE.GridHelper(400, 40, 0x2a2d3a, 0x1a1d27));
+
+      window.addEventListener("resize", () => {
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(container.clientWidth, container.clientHeight);
+      });
+
+      (function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+      })();
+    }
+
+    function loadSTL(arrayBuffer) {
+      initViewer();
+      if (currentMesh) {
+        scene.remove(currentMesh);
+        currentMesh.geometry.dispose();
+        currentMesh.material.dispose();
+      }
+
+      const geometry = new STLLoader().parse(arrayBuffer);
+      geometry.computeVertexNormals();
+
+      currentMesh = new THREE.Mesh(geometry, new THREE.MeshPhysicalMaterial({
+        color: 0x6c63ff, metalness: 0.3, roughness: 0.4,
+        clearcoat: 0.2, clearcoatRoughness: 0.3,
+      }));
+      currentMesh.castShadow = true;
+      currentMesh.receiveShadow = true;
+
+      geometry.computeBoundingBox();
+      const center = new THREE.Vector3();
+      geometry.boundingBox.getCenter(center);
+      currentMesh.position.sub(center);
+      scene.add(currentMesh);
+
+      const size = new THREE.Vector3();
+      geometry.boundingBox.getSize(size);
+      const maxDim = Math.max(size.x, size.y, size.z);
+      camera.position.set(maxDim * 2, maxDim * 1.6, maxDim * 2);
+      controls.target.set(0, 0, 0);
+      controls.update();
+    }
+
+    function loadGLTF(arrayBuffer) {
+      initViewer();
+      if (currentMesh) {
+        scene.remove(currentMesh);
+        if (currentMesh.geometry) currentMesh.geometry.dispose();
+        if (currentMesh.material) currentMesh.material.dispose();
+        currentMesh = null;
+      }
+
+      new GLTFLoader().parse(arrayBuffer, '', (gltf) => {
+        const model = gltf.scene;
+        model.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        model.position.sub(center);
+        scene.add(model);
+        currentMesh = model;
+
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        camera.position.set(maxDim * 2, maxDim * 1.6, maxDim * 2);
+        controls.target.set(0, 0, 0);
+        controls.update();
+      }, (err) => {
+        console.error('GLTF load error:', err);
+        showToast('Failed to load GLTF model.');
+      });
+    }
+
+    /* ========== Helpers ========== */
+    function showToast(msg, dur = 5000) {
+      toast.textContent = msg;
+      toast.classList.add("show");
+      setTimeout(() => toast.classList.remove("show"), dur);
+    }
+
+    function setLoading(on) {
+      btnApply.disabled = on;
+      spinner.classList.toggle("visible", on);
+      btnLabel.textContent = on ? "Generating\u2026" : "Apply Configuration";
+    }
+
+    function clearErrors() {
+      Object.keys(inputs).forEach(k => {
+        inputs[k].classList.remove("invalid");
+        $("#err_" + k).textContent = "";
+      });
+      validationBox.innerHTML = "";
+      validationBox.classList.remove("visible");
+    }
+
+    function setFieldError(k, msg) {
+      inputs[k].classList.add("invalid");
+      $("#err_" + k).textContent = msg;
+    }
+
+    /* ========== Validation ========== */
+    function validateInputs(rd, bw, sd, oh, bsw) {
+      const errors = [];
+
+      if (isNaN(sd) || sd < 5 || sd > 200)      errors.push({ field: "shaft_diameter",  msg: "Shaft diameter must be between 5 and 200 mm" });
+      if (isNaN(bw) || bw < 5 || bw > 200)      errors.push({ field: "bearing_width",   msg: "Bearing width must be between 5 and 200 mm" });
+      if (isNaN(oh) || oh < 20 || oh > 500)      errors.push({ field: "overall_height",  msg: "Overall height must be between 20 and 500 mm" });
+      if (isNaN(bsw) || bsw < 20 || bsw > 500)  errors.push({ field: "base_width",      msg: "Base width must be between 20 and 500 mm" });
+      if (isNaN(rd) || rd < 30 || rd > 1000)     errors.push({ field: "roller_diameter",  msg: "Roller diameter must be between 30 and 1000 mm" });
+
+      if (!isNaN(sd) && sd <= 0)                           errors.push({ field: "shaft_diameter",  msg: "Shaft diameter must be greater than 0" });
+      if (!isNaN(oh) && oh < 10)                           errors.push({ field: "overall_height",  msg: "Overall height must be at least 10 mm" });
+      if (!isNaN(rd) && !isNaN(sd) && rd <= sd)            errors.push({ field: "roller_diameter",  msg: "Roller diameter must be larger than shaft diameter" });
+      if (!isNaN(bsw) && !isNaN(sd) && bsw <= sd)         errors.push({ field: "base_width",      msg: "Base width must be larger than shaft diameter" });
+      if (!isNaN(bw) && !isNaN(oh) && bw >= oh)            errors.push({ field: "bearing_width",   msg: "Bearing width must be less than overall height" });
+      if (!isNaN(rd) && !isNaN(bsw) && rd - bsw < 10)     errors.push({ field: "roller_diameter",  msg: "Roller diameter minus base width must be at least 10 mm" });
+
+      return { valid: errors.length === 0, errors };
+    }
+
+    function runValidation() {
+      clearErrors();
+      const rd  = parseFloat(inputs.roller_diameter.value);
+      const bw  = parseFloat(inputs.bearing_width.value);
+      const sd  = parseFloat(inputs.shaft_diameter.value);
+      const oh  = parseFloat(inputs.overall_height.value);
+      const bsw = parseFloat(inputs.base_width.value);
+      const result = validateInputs(rd, bw, sd, oh, bsw);
+
+      if (!result.valid) {
+        const extra = [];
+        result.errors.forEach(({ field, msg }) => {
+          const span = $("#err_" + field);
+          if (!span.textContent) setFieldError(field, msg);
+          else extra.push(msg);
+        });
+        if (extra.length) {
+          validationBox.innerHTML = extra.map(m => `<p>${m}</p>`).join("");
+          validationBox.classList.add("visible");
+        }
+      }
+      return result.valid;
+    }
+
+    Object.values(inputs).forEach(el => el.addEventListener("input", () => runValidation()));
+
+    /* ========== Submit ========== */
+    btnApply.addEventListener("click", async () => {
+      if (!runValidation()) return;
+
+      const payload = {
+        roller_diameter: parseFloat(inputs.roller_diameter.value),
+        bearing_width:   parseFloat(inputs.bearing_width.value),
+        shaft_diameter:  parseFloat(inputs.shaft_diameter.value),
+        overall_height:  parseFloat(inputs.overall_height.value),
+        base_width:      parseFloat(inputs.base_width.value),
+      };
+
+      setLoading(true);
+      try {
+        const res = await fetch("/api/generate-cad", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `Server error ${res.status}`);
+        }
+
+        const buf = await res.arrayBuffer();
+        const contentType = res.headers.get("content-type") || "";
+        placeholder.classList.add("hidden");
+        canvas.style.display = "block";
+
+        if (contentType.includes("gltf-binary") || contentType.includes("gltf+json")) {
+          loadGLTF(buf);
+        } else {
+          loadSTL(buf);
+        }
+      } catch (err) {
+        console.error(err);
+        showToast(err.message || "An unexpected error occurred.");
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    /* ========== Drawing button ========== */
+    function setDrawingLoading(on) {
+      btnDrawing.disabled = on;
+      spinnerDraw.classList.toggle("visible", on);
+      btnDrawingLbl.textContent = on ? "Generating\u2026" : "Generate Drawing (PDF/SVG)";
+    }
+
+    closeDrawing.addEventListener("click", () => {
+      drawingPanel.classList.remove("visible");
+      tab3d.classList.add("active");
+      tabDrawing.classList.remove("active");
+    });
+
+    tab3d.addEventListener("click", () => {
+      drawingPanel.classList.remove("visible");
+      tab3d.classList.add("active");
+      tabDrawing.classList.remove("active");
+    });
+
+    tabDrawing.addEventListener("click", () => {
+      drawingPanel.classList.add("visible");
+      tabDrawing.classList.add("active");
+      tab3d.classList.remove("active");
+    });
+
+    btnDrawing.addEventListener("click", async () => {
+      if (!runValidation()) return;
+
+      const payload = {
+        roller_diameter: parseFloat(inputs.roller_diameter.value),
+        bearing_width:   parseFloat(inputs.bearing_width.value),
+        shaft_diameter:  parseFloat(inputs.shaft_diameter.value),
+        overall_height:  parseFloat(inputs.overall_height.value),
+        base_width:      parseFloat(inputs.base_width.value),
+      };
+
+      setDrawingLoading(true);
+      try {
+        const res = await fetch("/api/generate-drawing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `Server error ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        // Show tabs and switch to drawing view
+        viewTabs.classList.remove("hidden");
+        drawingPanel.classList.add("visible");
+        tabDrawing.classList.add("active");
+        tab3d.classList.remove("active");
+
+        // Reset previous drawing content
+        drawingIframe.style.display = "none";
+        drawingIframe.src = "about:blank";
+        drawingImg.style.display = "none";
+        drawingEmpty.style.display = "none";
+        downloadPdf.style.display = "none";
+        downloadSvg.style.display = "none";
+
+        let displayed = false;
+
+        if (data.svg) {
+          downloadSvg.href = "/api/output/" + data.svg;
+          downloadSvg.download = data.svg;
+          downloadSvg.style.display = "inline-block";
+        }
+
+        if (data.pdf) {
+          downloadPdf.href = "/api/output/" + data.pdf;
+          downloadPdf.download = data.pdf;
+          downloadPdf.style.display = "inline-block";
+          // Display PDF in iframe (works in Chrome, Edge, Firefox)
+          drawingIframe.src = "/api/output/" + data.pdf;
+          drawingIframe.style.display = "block";
+          displayed = true;
+        }
+
+        if (!displayed && data.svg) {
+          // Fallback: display SVG in iframe
+          drawingIframe.src = "/api/output/" + data.svg;
+          drawingIframe.style.display = "block";
+          displayed = true;
+        }
+
+        if (!displayed) {
+          drawingEmpty.style.display = "block";
+          drawingEmpty.textContent = "Drawing generation completed but no PDF/SVG files were produced. Check server logs.";
+        }
+
+        // Also load the 3D model if available
+        if (data.model) {
+          try {
+            const modelRes = await fetch("/api/output/" + data.model);
+            if (modelRes.ok) {
+              const buf = await modelRes.arrayBuffer();
+              placeholder.classList.add("hidden");
+              canvas.style.display = "block";
+              if (data.model.endsWith(".glb") || data.model.endsWith(".gltf")) {
+                loadGLTF(buf);
+              } else {
+                loadSTL(buf);
+              }
+            }
+          } catch (e) {
+            console.log("Model loading skipped:", e);
+          }
+        }
+
+      } catch (err) {
+        console.error(err);
+        showToast(err.message || "Drawing generation failed.");
+      } finally {
+        setDrawingLoading(false);
+      }
+    });
+  </script>
+</body>
+</html>
